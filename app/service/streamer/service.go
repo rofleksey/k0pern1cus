@@ -74,13 +74,19 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		fadeoutStart = 0
 	}
 
-	fadeFilterStr := fmt.Sprintf("fade=t=in:st=0:d=%0.2f,fade=t=out:st=%.2f:d=%0.2f",
-		fadeDuration, fadeoutStart, fadeDuration)
+	filters := []string{}
 
-	scaleFilter := "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
-	textFilter := fmt.Sprintf("drawtext=text='%s':x=w-text_w-10:y=10:fontsize=24:fontcolor=white:shadowcolor=black:shadowx=2:shadowy=2", clip.Title)
+	// Fade filters
+	filters = append(filters, fmt.Sprintf("fade=t=in:st=0:d=%.2f", fadeDuration))
+	filters = append(filters, fmt.Sprintf("fade=t=out:st=%.2f:d=%.2f", fadeoutStart, fadeDuration))
 
-	filters := []string{fadeFilterStr, scaleFilter, textFilter}
+	// Scale filter
+	filters = append(filters, "scale=1920:1080:force_original_aspect_ratio=decrease")
+	filters = append(filters, "pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
+
+	escapedTitle := strings.ReplaceAll(clip.Title, "'", "'\\''")
+	escapedTitle = strings.ReplaceAll(escapedTitle, ":", "\\:")
+	filters = append(filters, fmt.Sprintf("drawtext=text='%s':x=w-text_w-10:y=10:fontsize=24:fontcolor=white", escapedTitle))
 
 	args := []string{
 		"-re",
@@ -95,7 +101,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-c:a", "aac",
 		"-b:a", "128k",
 		"-f", "mpegts",
-		"pipe:1",
+		"-",
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
