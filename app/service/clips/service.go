@@ -120,6 +120,9 @@ func (s *Service) Init(ctx context.Context) error {
 }
 
 func (s *Service) RemoveClip() (*ClipHandle, bool) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
 	if len(s.clips) == 0 {
 		return nil, false
 	}
