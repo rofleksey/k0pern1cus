@@ -84,6 +84,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	filters = append(filters, "scale=1920:1080:force_original_aspect_ratio=decrease")
 	filters = append(filters, "pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
 
+	// Draw clip title
 	escapedTitle := strings.ReplaceAll(clip.Title, "'", "'\\''")
 	escapedTitle = strings.ReplaceAll(escapedTitle, ":", "\\:")
 	filters = append(filters, fmt.Sprintf("drawtext=text='%s':x=w-text_w-10:y=10:fontsize=24:fontcolor=white", escapedTitle))

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var retryInterval = 2 * time.Second
+var retryInterval = time.Second
 
 type ClipHandle struct {
 	clip       twitch.Clip

@@ -1,0 +1,7 @@
+twitch:
+  broadcaster_id: "123456789"
+  game_id: "491487"
+  min_date: "December 28, 2020"
+  client_id: client_id
+  client_secret: client_secret
+  rtmp_url: "rtmp://ingest.global-contribute.live-video.net/app/{KEY}"
