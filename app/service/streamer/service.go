@@ -66,18 +66,16 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 
 	fadeFilterStr := fmt.Sprintf("fade=t=in:st=0:d=%0.2f,fade=t=out:st=%.2f:d=%0.2f",
 		fadeDuration, fadeoutStart, fadeDuration)
-	filters := []string{fadeFilterStr}
+
+	scaleFilter := "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+	textFilter := fmt.Sprintf("drawtext=text='%s':x=w-text_w-10:y=10:fontsize=24:fontcolor=white:shadowcolor=black:shadowx=2:shadowy=2", clip.Title)
+
+	filters := []string{fadeFilterStr, scaleFilter, textFilter}
 
 	args := []string{
 		"-re",
 		"-i", filePath,
-	}
-
-	if len(filters) > 0 {
-		args = append(args, "-vf", strings.Join(filters, ","))
-	}
-
-	args = append(args,
+		"-vf", strings.Join(filters, ","),
 		"-c:v", "libx264",
 		"-preset", "veryfast",
 		"-maxrate", "3000k",
@@ -88,7 +86,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-b:a", "128k",
 		"-f", "mpegts",
 		"pipe:1",
-	)
+	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stdout, err := cmd.StdoutPipe()
