@@ -1,0 +1,13 @@
+.idea/
+data/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+k0pern1cus
+**/node_modules
+scripts
+config.yaml
