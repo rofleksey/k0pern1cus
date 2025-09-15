@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS apiBuilder
+FROM golang:1.25-alpine AS apiBuilder
 WORKDIR /opt
 RUN apk update && apk add --no-cache make
 COPY . /opt/
