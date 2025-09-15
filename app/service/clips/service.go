@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"k0pern1cus/app/client/clip_downloader"
 	"k0pern1cus/app/client/twitch"
+	"k0pern1cus/pkg/config"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -13,12 +14,10 @@ import (
 	"github.com/samber/do"
 )
 
-var accountCreationDateStr = "December 28, 2020"
-var broadcasterID = "160864129" // k0per1s
-var gameID = "491487"           // dead by daylight
 var pageSize = 100
 
 type Service struct {
+	cfg        *config.Config
 	client     *twitch.Client
 	downloader *clip_downloader.Downloader
 
@@ -28,6 +27,7 @@ type Service struct {
 
 func New(di *do.Injector) (*Service, error) {
 	return &Service{
+		cfg:        do.MustInvoke[*config.Config](di),
 		client:     do.MustInvoke[*twitch.Client](di),
 		downloader: do.MustInvoke[*clip_downloader.Downloader](di),
 	}, nil
@@ -41,7 +41,7 @@ func (s *Service) Init(ctx context.Context) error {
 
 	clips := make(map[string]*ClipHandle)
 
-	accountCreationDate, err := time.Parse("January 2, 2006", accountCreationDateStr)
+	accountCreationDate, err := time.Parse("January 2, 2006", s.cfg.Twitch.MinDate)
 	if err != nil {
 		return fmt.Errorf("could not parse account creation_date: %v", err)
 	}
@@ -63,7 +63,7 @@ func (s *Service) Init(ctx context.Context) error {
 			)
 
 			res, err := s.client.GetClips(ctx, &twitch.GetClipsParams{
-				BroadcasterID: broadcasterID,
+				BroadcasterID: s.cfg.Twitch.BroadcasterID,
 				First:         pageSize,
 				StartedAt:     startedAt,
 				EndedAt:       endedAt,
@@ -78,7 +78,7 @@ func (s *Service) Init(ctx context.Context) error {
 			}
 
 			for _, clip := range res.Data {
-				if clip.GameID != gameID {
+				if clip.GameID != s.cfg.Twitch.GameID {
 					continue
 				}
 

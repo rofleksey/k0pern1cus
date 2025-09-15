@@ -7,17 +7,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
-var retryInterval = 5 * time.Second
+var retryInterval = 2 * time.Second
 
 type ClipHandle struct {
 	clip       twitch.Clip
 	downloader *clip_downloader.Downloader
 
-	m         sync.Mutex
 	readyChan chan struct{}
 }
 
@@ -34,6 +32,7 @@ func (h *ClipHandle) prepareAsync(ctx context.Context) {
 			)
 
 			time.Sleep(retryInterval)
+			continue
 		}
 
 		break
