@@ -13,7 +13,7 @@ import (
 	"github.com/samber/do"
 )
 
-var accountCreationDateStr = "June 20, 2017"
+var accountCreationDateStr = "December 28, 2020"
 var broadcasterID = "160864129" // k0per1s
 var gameID = "491487"           // dead by daylight
 var pageSize = 100

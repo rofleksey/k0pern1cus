@@ -2,6 +2,7 @@ package streamer
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -46,6 +47,9 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, err
 		s.cfg.Twitch.RTMPUrl,
 	)
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
@@ -54,6 +58,12 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, err
 	if err = cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
+
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			slog.Error("FFmpeg streamer process failed", "stderr", stderr.String(), "error", err)
+		}
+	}()
 
 	return stdin, nil
 }
@@ -89,6 +99,9 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("error creating stdout pipe: %v", err)
@@ -108,7 +121,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	}
 
 	if err = cmd.Wait(); err != nil {
-		return fmt.Errorf("FFmpeg processing error: %v", err)
+		return fmt.Errorf("FFmpeg processing error: %v, stderr: %s", err, stderr.String())
 	}
 
 	return nil
