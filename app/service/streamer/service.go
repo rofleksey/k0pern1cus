@@ -83,7 +83,7 @@ func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) 
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
-		slog.Info("FFmpeg output", "process", processType, "line", line)
+		slog.Debug("FFmpeg output", "process", processType, "line", line)
 	}
 }
 
@@ -123,7 +123,6 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-keyint_min", "120",
 		"-pix_fmt", "yuv420p",
 		"-x264opts", "nal-hrd=cbr",
-		"-flags", "+cgop",
 		"-c:a", "aac",
 		"-b:a", "160k",
 		"-ar", "48000",
@@ -225,7 +224,7 @@ func (s *Service) Run(ctx context.Context) error {
 		nextClip, nextOk := s.getNextClip(ctx)
 
 		if downloadOk {
-			slog.Info("Streaming video",
+			slog.Debug("Streaming video",
 				slog.String("clip_url", clip.Clip().URL),
 			)
 

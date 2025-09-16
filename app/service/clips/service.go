@@ -39,7 +39,7 @@ func New(di *do.Injector) (*Service, error) {
 }
 
 func (s *Service) Init(ctx context.Context) error {
-	slog.Info("Initializing clips...")
+	slog.Debug("Initializing clips...")
 
 	minDate, err := time.Parse("January 2, 2006", s.cfg.Twitch.MinDate)
 	if err != nil {
@@ -50,7 +50,7 @@ func (s *Service) Init(ctx context.Context) error {
 
 	select {
 	case <-s.initComplete:
-		slog.Info("Initial clips loaded, continuing with background fetch")
+		slog.Debug("Initial clips loaded, continuing with background fetch")
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -72,7 +72,7 @@ func (s *Service) backgroundFetchAllClips(ctx context.Context, minDate time.Time
 			var after string
 
 			for {
-				slog.Info("Getting clips...",
+				slog.Debug("Getting clips...",
 					slog.String("broadcaster_id", broadcasterID),
 					slog.Time("started_at", startedAt),
 					slog.Time("ended_at", endedAt),
@@ -97,7 +97,6 @@ func (s *Service) backgroundFetchAllClips(ctx context.Context, minDate time.Time
 					break
 				}
 
-				// Process clips and add to storage
 				newClips := make([]*ClipHandle, 0)
 				for _, clip := range res.Data {
 					if clip.GameID != s.cfg.Twitch.GameID {
