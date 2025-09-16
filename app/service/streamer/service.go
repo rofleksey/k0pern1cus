@@ -46,7 +46,7 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-avoid_negative_ts", "make_non_negative",
 		"-c:v", "copy",
 		"-c:a", "copy",
-		"-flvflags", "no_duration_filesize+autoresume",
+		"-flvflags", "no_duration_filesize",
 		"-f", "flv",
 		"-flush_packets", "1",
 		"-movflags", "+faststart",
