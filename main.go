@@ -58,7 +58,7 @@ func main() {
 	}()
 
 	if err = do.MustInvoke[*clips.Service](di).Init(appCtx); err != nil {
-		log.Fatalf("clipo service init failed: %v", err)
+		log.Fatalf("clip service init failed: %v", err)
 	}
 
 	if err = do.MustInvoke[*streamer.Service](di).Run(appCtx); err != nil {

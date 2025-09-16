@@ -41,68 +41,69 @@ func (s *Service) Init(ctx context.Context) error {
 
 	clips := make(map[string]*ClipHandle)
 
-	accountCreationDate, err := time.Parse("January 2, 2006", s.cfg.Twitch.MinDate)
+	minDate, err := time.Parse("January 2, 2006", s.cfg.Twitch.MinDate)
 	if err != nil {
 		return fmt.Errorf("could not parse account creation_date: %v", err)
 	}
 
 	timeWindow := 24 * time.Hour * 30 * 5 // 5 months, to prevent hitting the 1000 clips per pagination limit
 
-	endedAt := time.Now()
-	startedAt := endedAt.Add(timeWindow)
+	for _, broadcasterID := range s.cfg.Twitch.BroadcasterIDs {
+		endedAt := time.Now()
+		startedAt := endedAt.Add(timeWindow)
 
-	for {
-		var after string
-
-		batchCnt := 0
 		for {
-			slog.Info("Getting clips...",
-				slog.Time("started_at", startedAt),
-				slog.Time("ended_at", endedAt),
-				slog.String("after", after),
-			)
+			var after string
 
-			res, err := s.client.GetClips(ctx, &twitch.GetClipsParams{
-				BroadcasterID: s.cfg.Twitch.BroadcasterID,
-				First:         pageSize,
-				StartedAt:     startedAt,
-				EndedAt:       endedAt,
-				After:         after,
-			})
-			if err != nil {
-				return fmt.Errorf("client.GetClips: %w", err)
-			}
+			for {
+				slog.Info("Getting clips...",
+					slog.String("broadcaster_id", broadcasterID),
+					slog.Time("started_at", startedAt),
+					slog.Time("ended_at", endedAt),
+					slog.String("after", after),
+				)
 
-			if len(res.Data) == 0 {
-				break
-			}
-
-			for _, clip := range res.Data {
-				if clip.GameID != s.cfg.Twitch.GameID {
-					continue
+				res, err := s.client.GetClips(ctx, &twitch.GetClipsParams{
+					BroadcasterID: broadcasterID,
+					First:         pageSize,
+					StartedAt:     startedAt,
+					EndedAt:       endedAt,
+					After:         after,
+				})
+				if err != nil {
+					return fmt.Errorf("client.GetClips: %w", err)
 				}
 
-				clips[clip.ID] = &ClipHandle{
-					clip:       clip,
-					downloader: s.downloader,
-					readyChan:  make(chan struct{}),
+				if len(res.Data) == 0 {
+					break
 				}
-				batchCnt++
+
+				for _, clip := range res.Data {
+					if clip.GameID != s.cfg.Twitch.GameID {
+						continue
+					}
+
+					clips[clip.ID] = &ClipHandle{
+						clip:       clip,
+						downloader: s.downloader,
+						readyChan:  make(chan struct{}),
+					}
+				}
+
+				if res.Pagination.Cursor == "" {
+					break
+				}
+
+				after = res.Pagination.Cursor
+				time.Sleep(time.Second)
 			}
 
-			if res.Pagination.Cursor == "" {
+			endedAt = startedAt
+			startedAt = endedAt.Add(-timeWindow)
+
+			if endedAt.Before(minDate) {
 				break
 			}
-
-			after = res.Pagination.Cursor
-			time.Sleep(time.Second)
-		}
-
-		endedAt = startedAt
-		startedAt = endedAt.Add(-timeWindow)
-
-		if endedAt.Before(accountCreationDate) {
-			break
 		}
 	}
 

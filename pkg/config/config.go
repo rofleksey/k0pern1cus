@@ -15,12 +15,12 @@ type Config struct {
 	} `yaml:"log"`
 
 	Twitch struct {
-		BroadcasterID string `yaml:"broadcaster_id" validate:"required"`
-		GameID        string `yaml:"game_id" validate:"required"`
-		MinDate       string `yaml:"min_date" validate:"required"`
-		ClientID      string `yaml:"client_id" validate:"required"`
-		ClientSecret  string `yaml:"client_secret" validate:"required"`
-		RTMPUrl       string `yaml:"rtmp_url"`
+		BroadcasterIDs []string `yaml:"broadcaster_ids" validate:"required"`
+		GameID         string   `yaml:"game_id" validate:"required"`
+		MinDate        string   `yaml:"min_date" validate:"required"`
+		ClientID       string   `yaml:"client_id" validate:"required"`
+		ClientSecret   string   `yaml:"client_secret" validate:"required"`
+		RTMPUrl        string   `yaml:"rtmp_url"`
 	} `yaml:"twitch"`
 }
 
