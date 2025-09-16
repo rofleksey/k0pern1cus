@@ -46,11 +46,11 @@ func (s *Service) Init(ctx context.Context) error {
 		return fmt.Errorf("could not parse account creation_date: %v", err)
 	}
 
-	timeWindow := -24 * time.Hour * 30 * 5 // 5 months, to prevent hitting the 1000 clips per pagination limit
+	timeWindow := 24 * time.Hour * 30 * 5 // 5 months, to prevent hitting the 1000 clips per pagination limit
 
 	for _, broadcasterID := range s.cfg.Twitch.BroadcasterIDs {
 		endedAt := time.Now()
-		startedAt := endedAt.Add(timeWindow)
+		startedAt := endedAt.Add(-timeWindow)
 
 		for {
 			var after string
