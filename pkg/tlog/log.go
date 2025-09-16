@@ -17,11 +17,11 @@ func Init(cfg *config.Config) error {
 		ReplaceAttr: nil,
 	})}
 
-	if cfg.Log.TelegramToken != "" && cfg.Log.TelegramChatID != "" {
+	if cfg.Log.Telegram.Token != "" && cfg.Log.Telegram.ChatID != "" {
 		logHandlers = append(logHandlers, slogtelegram.Option{
 			Level:     slog.LevelError,
-			Token:     cfg.Log.TelegramToken,
-			Username:  cfg.Log.TelegramChatID,
+			Token:     cfg.Log.Telegram.Token,
+			Username:  cfg.Log.Telegram.ChatID,
 			AddSource: true,
 		}.NewTelegramHandler())
 	}

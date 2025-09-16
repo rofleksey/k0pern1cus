@@ -10,8 +10,10 @@ import (
 
 type Config struct {
 	Log struct {
-		TelegramToken  string `yaml:"telegram_token"`
-		TelegramChatID string `yaml:"telegram_chat_id"`
+		Telegram struct {
+			Token  string `yaml:"token"`
+			ChatID string `yaml:"chat_id"`
+		} `yaml:"telegram"`
 	} `yaml:"log"`
 
 	Twitch struct {

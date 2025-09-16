@@ -36,7 +36,7 @@ func New(di *do.Injector) (*Service, error) {
 	}, nil
 }
 
-func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, error) {
+func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -56,27 +56,21 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, err
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("create stdin pipe: %w", err)
+		return nil, nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, fmt.Errorf("create stderr pipe: %w", err)
+		return nil, nil, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err = cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start ffmpeg: %w", err)
+		return nil, nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
 	go s.monitorFFmpegOutput(stderr, "main")
 
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			slog.Error("FFmpeg streamer process failed", "error", err)
-		}
-	}()
-
-	return stdin, nil
+	return stdin, cmd, nil
 }
 
 func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) {
@@ -196,11 +190,16 @@ func (s *Service) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stdin, err := s.startStreamerProcess(ctx)
+	stdin, cmd, err := s.startStreamerProcess(ctx)
 	if err != nil {
 		return fmt.Errorf("start streamer process: %w", err)
 	}
 	defer stdin.Close()
+
+	go func() {
+		_ = cmd.Wait()
+		cancel()
+	}()
 
 	s.preloadClips(ctx)
 
