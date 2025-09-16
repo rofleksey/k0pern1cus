@@ -2,7 +2,6 @@ package streamer
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -39,46 +38,51 @@ func New(di *do.Injector) (*Service, error) {
 
 func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, error) {
 	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-re",
+		"-hide_banner",
+		"-loglevel", "warning",
 		"-i", "pipe:0",
-		"-c:v", "libx264",
-		"-preset", "medium",
-		"-tune", "film",
-		"-profile:v", "high",
-		"-level", "4.0",
-		"-crf", "18",
-		"-maxrate", "6000k",
-		"-bufsize", "12000k",
-		"-pix_fmt", "yuv420p",
-		"-g", "60",
-		"-keyint_min", "60",
-		"-sc_threshold", "0",
-		"-c:a", "aac",
-		"-b:a", "160k",
-		"-ar", "48000",
+		"-fflags", "+genpts+igndts+flush_packets", // Added flush_packets
+		"-avoid_negative_ts", "make_non_negative", // Better negative timestamp handling
+		//"-vsync", "cfr", // Constant frame rate
+		"-c:v", "copy",
+		"-c:a", "copy",
+		"-flvflags", "no_duration_filesize",
 		"-f", "flv",
+		"-flush_packets", "1",
 		s.cfg.Twitch.RTMPUrl,
 	)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("create stderr pipe: %w", err)
+	}
+
 	if err = cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
+	go s.monitorFFmpegOutput(stderr, "main")
+
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			slog.Error("FFmpeg streamer process failed", "stderr", stderr.String(), "error", err)
+			slog.Error("FFmpeg streamer process failed", "error", err)
 		}
 	}()
 
 	return stdin, nil
+}
+
+func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) {
+	scanner := bufio.NewScanner(stderr)
+	for scanner.Scan() {
+		line := scanner.Text()
+		slog.Info("FFmpeg output", "process", processType, "line", line)
+	}
 }
 
 func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath string, stdin io.WriteCloser) error {
@@ -94,45 +98,46 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
 	}
 
-	escapedTitle := strings.ReplaceAll(clip.Title, "'", "'\\''")
+	escapedTitle := fmt.Sprintf("%s - %s", clip.BroadcasterName, clip.Title)
+	escapedTitle = strings.ReplaceAll(escapedTitle, "'", "'\\''")
 	escapedTitle = strings.ReplaceAll(escapedTitle, ":", "\\:")
 	filters = append(filters, fmt.Sprintf("drawtext=text='%s':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:x=w-text_w-20:y=20:fontsize=28:fontcolor=white:shadowcolor=black:shadowx=2:shadowy=2", escapedTitle))
 
 	args := []string{
+		"-hide_banner",
+		"-loglevel", "warning",
 		"-re",
 		"-i", filePath,
 		"-vf", strings.Join(filters, ","),
 		"-c:v", "libx264",
-		"-preset", "medium",
-		"-tune", "film",
-		"-profile:v", "high",
-		"-level", "4.0",
+		"-preset", "veryfast",
+		"-tune", "zerolatency",
 		"-crf", "18",
 		"-maxrate", "6000k",
 		"-bufsize", "12000k",
 		"-pix_fmt", "yuv420p",
-		"-g", "60",
-		"-keyint_min", "60",
 		"-sc_threshold", "0",
-		"-c:a", "aac",
-		"-b:a", "160k",
-		"-ar", "48000",
-		"-f", "mpegts",
+		"-x264opts", "nal-hrd=cbr:force-cfr=1",
+		"-profile:v", "high",
 		"-movflags", "+faststart",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-ar", "44100",
+		"-f", "mpegts",
+		"-muxdelay", "0",
+		"-muxpreload", "0",
 		"-",
 	}
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("error creating stdout pipe: %v", err)
+		return fmt.Errorf("create stdout pipe: %w", err)
 	}
 
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("error starting FFmpeg: %v", err)
+		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
 	buf := make([]byte, bufferSizeMB*1024*1024)
@@ -141,11 +146,11 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	_, err = io.CopyBuffer(stdin, reader, buf)
 	if err != nil {
 		_ = cmd.Process.Kill()
-		return fmt.Errorf("error copying video data: %v", err)
+		return fmt.Errorf("copy video data: %w", err)
 	}
 
 	if err = cmd.Wait(); err != nil {
-		return fmt.Errorf("FFmpeg processing error: %v, stderr: %s", err, stderr.String())
+		return fmt.Errorf("ffmpeg processing: %w", err)
 	}
 
 	return nil
@@ -191,16 +196,13 @@ func (s *Service) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("start streamer process: %w", err)
 	}
+	defer stdin.Close()
 
 	s.preloadClips(ctx)
 
 	clip, ok := s.getNextClip(ctx)
 	if !ok {
 		return fmt.Errorf("no clips available")
-	}
-
-	if err := clip.Join(ctx); err != nil {
-		return fmt.Errorf("clip.Join: %w", err)
 	}
 
 	for {
@@ -211,18 +213,20 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 
 		if err = clip.Join(ctx); err != nil {
-			return fmt.Errorf("clip.Join: %w", err)
+			return fmt.Errorf("clip join: %w", err)
 		}
-		videoFile := clip.GetDownloadedFile()
-
-		slog.Info("Streaming video",
-			slog.String("clip_id", clip.Clip().ID),
-		)
+		videoFile, downloadOk := clip.GetDownloadedFile()
 
 		nextClip, nextOk := s.getNextClip(ctx)
 
-		if err = s.streamVideo(ctx, clip.Clip(), videoFile, stdin); err != nil {
-			return fmt.Errorf("stream video: %w", err)
+		if downloadOk {
+			slog.Info("Streaming video",
+				slog.String("clip_url", clip.Clip().URL),
+			)
+
+			if err = s.streamVideo(ctx, clip.Clip(), videoFile, stdin); err != nil {
+				return fmt.Errorf("stream video: %w", err)
+			}
 		}
 
 		clip.Release()
