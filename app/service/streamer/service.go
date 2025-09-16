@@ -192,7 +192,7 @@ func (s *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("start streamer process: %w", err)
 	}
 
-	go s.preloadClips(ctx)
+	s.preloadClips(ctx)
 
 	clip, ok := s.getNextClip(ctx)
 	if !ok {
