@@ -12,22 +12,31 @@ import (
 )
 
 var retryInterval = time.Second
+var maxRetries = 3
 
 type ClipHandle struct {
-	downloaded atomic.Bool
+	prepareCalled atomic.Bool
+	downloaded    atomic.Bool
+
 	clip       twitch.Clip
 	downloader *clip_downloader.Downloader
 
 	readyChan chan struct{}
 }
 
-func (h *ClipHandle) PrepareAsync(ctx context.Context) {
+func (h *ClipHandle) PrepareAsync(ctx context.Context) chan struct{} {
+	if !h.prepareCalled.CompareAndSwap(false, true) {
+		return h.readyChan
+	}
+
 	go h.prepareAsync(ctx)
+	return h.readyChan
 }
 
 func (h *ClipHandle) prepareAsync(ctx context.Context) {
-	maxRetries := 3
+	defer close(h.readyChan)
 
+	downloadBeginTime := time.Now()
 	for i := 0; i < maxRetries; i++ {
 		if err := h.downloader.DownloadClip(ctx, h.clip.ID, h.getDownloadPath()); err != nil {
 			slog.Error("Download clip error",
@@ -49,18 +58,11 @@ func (h *ClipHandle) prepareAsync(ctx context.Context) {
 		}
 
 		h.downloaded.Store(true)
+		slog.Debug("Clip download finished",
+			slog.String("clip_id", h.clip.ID),
+			slog.Duration("duration", time.Since(downloadBeginTime)),
+		)
 		break
-	}
-
-	close(h.readyChan)
-}
-
-func (h *ClipHandle) Join(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-h.readyChan:
-		return nil
 	}
 }
 

@@ -18,21 +18,22 @@ import (
 
 var fadeDuration = 0.5
 var bufferSizeMB = 10
-var preloadCount = 3
+var preloadCount = 5
+var preloadWorkerCount = 1
 
 type Service struct {
 	cfg          *config.Config
 	clipsService *clips.Service
 
-	preloadMutex sync.Mutex
-	preloaded    []*clips.ClipHandle
+	preloadWg   sync.WaitGroup
+	preloadChan chan *clips.ClipHandle
 }
 
 func New(di *do.Injector) (*Service, error) {
 	return &Service{
 		cfg:          do.MustInvoke[*config.Config](di),
 		clipsService: do.MustInvoke[*clips.Service](di),
-		preloaded:    make([]*clips.ClipHandle, 0, preloadCount),
+		preloadChan:  make(chan *clips.ClipHandle, preloadCount),
 	}, nil
 }
 
@@ -55,7 +56,7 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-f", "flv",
 		"-flush_packets", "1",
 		"-movflags", "+faststart",
-		"-rtmp_buffer", "5000",
+		"-rtmp_buffer", "3000",
 		s.cfg.Twitch.RTMPUrl,
 	)
 
@@ -160,34 +161,45 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	return nil
 }
 
-func (s *Service) preloadClips(ctx context.Context) {
-	s.preloadMutex.Lock()
-	defer s.preloadMutex.Unlock()
+func (s *Service) preloadWorker(ctx context.Context) {
+	defer s.preloadWg.Done()
 
-	for len(s.preloaded) < preloadCount {
+	for {
 		clip, ok := s.clipsService.RemoveClip()
 		if !ok {
-			break
+			return
 		}
-		clip.PrepareAsync(ctx)
-		s.preloaded = append(s.preloaded, clip)
+
+		readyChan := clip.PrepareAsync(ctx)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-readyChan:
+			s.preloadChan <- clip
+		}
 	}
 }
 
-func (s *Service) getNextClip(ctx context.Context) (*clips.ClipHandle, bool) {
-	s.preloadMutex.Lock()
-	defer s.preloadMutex.Unlock()
-
-	if len(s.preloaded) == 0 {
-		return nil, false
+func (s *Service) startPreloadWorkers(ctx context.Context) {
+	for i := 0; i < preloadWorkerCount; i++ {
+		s.preloadWg.Add(1)
+		go s.preloadWorker(ctx)
 	}
 
-	nextClip := s.preloaded[0]
-	s.preloaded = s.preloaded[1:]
+	go func() {
+		s.preloadWg.Wait()
+		close(s.preloadChan)
+	}()
+}
 
-	go s.preloadClips(ctx)
-
-	return nextClip, true
+func (s *Service) getNextClip(ctx context.Context) (*clips.ClipHandle, bool) {
+	select {
+	case <-ctx.Done():
+		return nil, false
+	case clip, ok := <-s.preloadChan:
+		return clip, ok
+	}
 }
 
 func (s *Service) Run(ctx context.Context) error {
@@ -207,42 +219,30 @@ func (s *Service) Run(ctx context.Context) error {
 		cancel()
 	}()
 
-	s.preloadClips(ctx)
-
-	clip, ok := s.getNextClip(ctx)
-	if !ok {
-		return fmt.Errorf("no clips available")
-	}
+	s.startPreloadWorkers(ctx)
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		clip, ok := s.getNextClip(ctx)
+		if !ok {
+			return fmt.Errorf("no clips available")
 		}
 
-		if err = clip.Join(ctx); err != nil {
-			return fmt.Errorf("clip join: %w", err)
-		}
 		videoFile, downloadOk := clip.GetDownloadedFile()
 
-		nextClip, nextOk := s.getNextClip(ctx)
-
 		if downloadOk {
-			slog.Debug("Streaming video",
+			slog.Info("Streaming video",
 				slog.String("clip_url", clip.Clip().URL),
 			)
 
 			if err = s.streamVideo(ctx, clip.Clip(), videoFile, stdin); err != nil {
 				return fmt.Errorf("stream video: %w", err)
 			}
+		} else {
+			slog.Error("Skipping video due to download failure",
+				slog.String("clip_url", clip.Clip().URL),
+			)
 		}
 
 		clip.Release()
-
-		if !nextOk {
-			return nil
-		}
-		clip = nextClip
 	}
 }
