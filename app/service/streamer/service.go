@@ -41,7 +41,6 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-stats",
 		"-re",
 		"-i", "pipe:0",
 		"-fflags", "+genpts+igndts+flush_packets",
