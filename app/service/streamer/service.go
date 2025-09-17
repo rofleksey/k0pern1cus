@@ -44,13 +44,29 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-re",
 		"-f", "mpegts",
 		"-i", "pipe:0",
-		"-fflags", "+genpts+igndts+flush_packets",
-		"-avoid_negative_ts", "make_non_negative",
-		"-c:v", "copy",
-		"-c:a", "copy",
-		"-flvflags", "no_duration_filesize",
+		"-fflags", "+genpts+igndts+discardcorrupt",
+		"-use_wallclock_as_timestamps", "1",
+		"-avoid_negative_ts", "make_zero",
+		"-err_detect", "ignore_err",
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-tune", "zerolatency",
+		"-profile:v", "main",
+		"-b:v", "6000k",
+		"-maxrate", "6000k",
+		"-minrate", "6000k",
+		"-bufsize", "12000k",
+		"-r", "60",
+		"-g", "120",
+		"-keyint_min", "120",
+		"-pix_fmt", "yuv420p",
+		"-x264opts", "nal-hrd=cbr:force-cfr=1",
+		"-c:a", "aac",
+		"-b:a", "160k",
+		"-ar", "44100",
+		"-ac", "2",
 		"-f", "flv",
-		"-movflags", "+faststart",
+		"-flvflags", "no_duration_filesize",
 		"-max_delay", "1000000",
 		"-avioflags", "direct",
 		s.cfg.Twitch.RTMPUrl,
@@ -107,25 +123,15 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-re",
 		"-i", filePath,
 		"-vf", strings.Join(filters, ","),
-		"-c:v", "libx264",
-		"-preset", "faster",
-		"-tune", "zerolatency",
-		"-profile:v", "main",
-		"-b:v", "6000k",
-		"-maxrate", "6000k",
-		"-minrate", "6000k",
-		"-bufsize", "12000k",
-		"-r", "60",
-		"-g", "120",
-		"-keyint_min", "120",
-		"-pix_fmt", "yuv420p",
-		"-x264opts", "nal-hrd=cbr:force-cfr=1",
-		"-c:a", "aac",
-		"-b:a", "160k",
-		"-ar", "44100",
-		"-ac", "2",
+		"-c:v", "mpeg2video",
+		"-q:v", "2",
+		"-c:a", "mp2",
+		"-b:a", "192k",
 		"-f", "mpegts",
-		"-flush_packets", "1",
+		"-fflags", "+genpts",
+		"-avoid_negative_ts", "make_zero",
+		"-vsync", "cfr",
+		"-flush_packets", "0",
 		"-muxdelay", "0",
 		"-muxpreload", "0",
 		"-max_delay", "0",
@@ -139,6 +145,13 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	if err != nil {
 		return fmt.Errorf("create stdout pipe: %w", err)
 	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("create stderr pipe: %w", err)
+	}
+
+	go s.monitorFFmpegOutput(stderr, clip.ID)
 
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start ffmpeg: %w", err)
