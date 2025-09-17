@@ -111,7 +111,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-i", filePath,
 		"-vf", strings.Join(filters, ","),
 		"-c:v", "libx264",
-		"-preset", "ultrafast",
+		"-preset", "faster",
 		"-tune", "zerolatency",
 		"-profile:v", "main",
 		"-b:v", "6000k",
