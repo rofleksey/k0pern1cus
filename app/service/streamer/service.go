@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"k0pern1cus/app/client/twitch"
 	"k0pern1cus/app/service/clips"
 	"k0pern1cus/pkg/config"
 	"log/slog"
@@ -21,6 +20,7 @@ var fadeDuration = 0.5
 var bufferSizeMB = 10
 var preloadCount = 5
 var preloadWorkerCount = 1
+var artificialOffset = time.Second
 
 type Service struct {
 	cfg          *config.Config
@@ -82,7 +82,10 @@ func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) 
 	}
 }
 
-func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath string, stdin io.WriteCloser, startOffset time.Duration) (time.Duration, error) {
+func (s *Service) streamVideo(ctx context.Context, clipHandle *clips.ClipHandle, stdin io.WriteCloser, startOffset time.Duration) (time.Duration, error) {
+	clip := clipHandle.Clip()
+	filePath, _ := clipHandle.GetDownloadedFile()
+
 	fadeoutStart := clip.Duration - fadeDuration
 	if fadeoutStart < 0 {
 		fadeoutStart = 0
@@ -124,6 +127,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		"-ar", "44100",
 		"-ac", "2",
 		"-f", "mpegts",
+		"-mpegts_flags", "initial_discontinuity",
 		"-flush_packets", "1",
 		"-muxdelay", "0",
 		"-muxpreload", "0",
@@ -163,7 +167,7 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 		return 0, fmt.Errorf("ffmpeg processing: %w", err)
 	}
 
-	return startOffset + time.Duration(clip.Duration*float64(time.Second)), nil
+	return startOffset + clipHandle.GetPreciseDuration() + artificialOffset, nil
 }
 
 func (s *Service) preloadWorker(ctx context.Context) {
@@ -238,14 +242,12 @@ func (s *Service) Run(ctx context.Context) error {
 			return fmt.Errorf("no clips available")
 		}
 
-		videoFile, downloadOk := clip.GetDownloadedFile()
-
-		if downloadOk {
+		if _, downloadOk := clip.GetDownloadedFile(); downloadOk {
 			slog.Info("Streaming video",
 				slog.String("clip_url", clip.Clip().URL),
 			)
 
-			newOffset, err := s.streamVideo(ctx, clip.Clip(), videoFile, stdin, currentOffset)
+			newOffset, err := s.streamVideo(ctx, clip, stdin, currentOffset)
 			if err != nil {
 				return fmt.Errorf("stream video: %w", err)
 			}

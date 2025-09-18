@@ -2,11 +2,15 @@ package clips
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"k0pern1cus/app/client/clip_downloader"
 	"k0pern1cus/app/client/twitch"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -15,8 +19,9 @@ var retryInterval = time.Second
 var maxRetries = 3
 
 type ClipHandle struct {
-	prepareCalled atomic.Bool
-	downloaded    atomic.Bool
+	prepareCalled   atomic.Bool
+	prepared        atomic.Bool
+	preciseDuration atomic.Pointer[time.Duration]
 
 	clip       twitch.Clip
 	downloader *clip_downloader.Downloader
@@ -33,10 +38,9 @@ func (h *ClipHandle) PrepareAsync(ctx context.Context) chan struct{} {
 	return h.readyChan
 }
 
-func (h *ClipHandle) prepareAsync(ctx context.Context) {
-	defer close(h.readyChan)
+func (h *ClipHandle) download(ctx context.Context) error {
+	beginTime := time.Now()
 
-	downloadBeginTime := time.Now()
 	for i := 0; i < maxRetries; i++ {
 		if err := h.downloader.DownloadClip(ctx, h.clip.ID, h.getDownloadPath()); err != nil {
 			slog.Error("Download clip error",
@@ -47,23 +51,88 @@ func (h *ClipHandle) prepareAsync(ctx context.Context) {
 			)
 
 			if i == maxRetries-1 {
-				slog.Error("Max retries exceeded for clip download",
-					slog.String("clip_id", h.clip.ID),
-				)
-				break
+				return err
 			}
 
 			time.Sleep(retryInterval)
 			continue
 		}
 
-		h.downloaded.Store(true)
 		slog.Debug("Clip download finished",
 			slog.String("clip_id", h.clip.ID),
-			slog.Duration("duration", time.Since(downloadBeginTime)),
+			slog.Duration("exec_time", time.Since(beginTime)),
 		)
-		break
+		return nil
 	}
+
+	return fmt.Errorf("unexpected error")
+}
+
+func (h *ClipHandle) measurePreciseDuration(ctx context.Context) (time.Duration, error) {
+	beginTime := time.Now()
+
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_format",
+		h.getDownloadPath(),
+	}
+
+	cmd := exec.CommandContext(ctx, "ffprobe", args...)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var probeOutput struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if err = json.Unmarshal(output, &probeOutput); err != nil {
+		return 0, fmt.Errorf("parse ffprobe output: %w", err)
+	}
+
+	if probeOutput.Format.Duration == "" {
+		return 0, fmt.Errorf("no duration found in ffprobe output")
+	}
+
+	durationSec, err := strconv.ParseFloat(probeOutput.Format.Duration, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse duration: %w", err)
+	}
+
+	slog.Debug("Clip duration measurement finished",
+		slog.String("clip_id", h.clip.ID),
+		slog.Duration("exec_time", time.Since(beginTime)),
+	)
+
+	return time.Duration(durationSec * float64(time.Second)), nil
+}
+
+func (h *ClipHandle) prepareAsync(ctx context.Context) {
+	defer close(h.readyChan)
+
+	if err := h.download(ctx); err != nil {
+		slog.Error("Max retries exceeded for clip download",
+			slog.String("clip_id", h.clip.ID),
+			slog.Any("error", err),
+		)
+		return
+	}
+
+	duration, err := h.measurePreciseDuration(ctx)
+	if err != nil {
+		slog.Error("Measure precise duration for clip failed",
+			slog.String("clip_id", h.clip.ID),
+			slog.Any("error", err),
+		)
+		return
+	}
+
+	h.preciseDuration.Store(&duration)
+	h.prepared.Store(true)
 }
 
 func (h *ClipHandle) getDownloadPath() string {
@@ -71,7 +140,16 @@ func (h *ClipHandle) getDownloadPath() string {
 }
 
 func (h *ClipHandle) GetDownloadedFile() (string, bool) {
-	return h.getDownloadPath(), h.downloaded.Load()
+	return h.getDownloadPath(), h.prepared.Load()
+}
+
+func (h *ClipHandle) GetPreciseDuration() time.Duration {
+	duration := h.preciseDuration.Load()
+	if duration == nil {
+		return -1
+	}
+
+	return *duration
 }
 
 func (h *ClipHandle) Clip() twitch.Clip {
