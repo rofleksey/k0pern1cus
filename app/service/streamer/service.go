@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/samber/do"
 )
@@ -44,31 +45,13 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-re",
 		"-f", "mpegts",
 		"-i", "pipe:0",
-		"-fflags", "+genpts+igndts+discardcorrupt",
-		"-use_wallclock_as_timestamps", "1",
-		"-avoid_negative_ts", "make_zero",
-		"-err_detect", "ignore_err",
-		"-c:v", "libx264",
-		"-preset", "fast",
-		"-tune", "zerolatency",
-		"-profile:v", "main",
-		"-b:v", "6000k",
-		"-maxrate", "6000k",
-		"-minrate", "6000k",
-		"-bufsize", "12000k",
-		"-r", "60",
-		"-g", "120",
-		"-keyint_min", "120",
-		"-pix_fmt", "yuv420p",
-		"-x264opts", "nal-hrd=cbr:force-cfr=1",
-		"-c:a", "aac",
-		"-b:a", "160k",
-		"-ar", "44100",
-		"-ac", "2",
+		"-c:v", "copy",
+		"-c:a", "copy",
+		"-fflags", "+genpts",
+		"-copyts",
 		"-f", "flv",
 		"-flvflags", "no_duration_filesize",
 		"-max_delay", "1000000",
-		"-avioflags", "direct",
 		s.cfg.Twitch.RTMPUrl,
 	)
 
@@ -99,7 +82,7 @@ func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) 
 	}
 }
 
-func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath string, stdin io.WriteCloser) error {
+func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath string, stdin io.WriteCloser, startOffset time.Duration) (time.Duration, error) {
 	fadeoutStart := clip.Duration - fadeDuration
 	if fadeoutStart < 0 {
 		fadeoutStart = 0
@@ -120,18 +103,28 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-re",
 		"-i", filePath,
 		"-vf", strings.Join(filters, ","),
-		"-c:v", "mpeg2video",
-		"-q:v", "2",
-		"-c:a", "mp2",
-		"-b:a", "192k",
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-tune", "zerolatency",
+		"-profile:v", "main",
+		"-b:v", "6000k",
+		"-maxrate", "6000k",
+		"-minrate", "6000k",
+		"-bufsize", "12000k",
+		"-r", "60",
+		"-g", "120",
+		"-keyint_min", "120",
+		"-pix_fmt", "yuv420p",
+		"-x264opts", "nal-hrd=cbr:force-cfr=1",
+		"-output_ts_offset", fmt.Sprintf("%.6f", startOffset.Seconds()),
+		"-c:a", "aac",
+		"-b:a", "160k",
+		"-ar", "44100",
+		"-ac", "2",
 		"-f", "mpegts",
-		"-fflags", "+genpts",
-		"-avoid_negative_ts", "make_zero",
-		"-vsync", "cfr",
-		"-flush_packets", "0",
+		"-flush_packets", "1",
 		"-muxdelay", "0",
 		"-muxpreload", "0",
 		"-max_delay", "0",
@@ -143,18 +136,18 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("create stdout pipe: %w", err)
+		return 0, fmt.Errorf("create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("create stderr pipe: %w", err)
+		return 0, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	go s.monitorFFmpegOutput(stderr, clip.ID)
 
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
+		return 0, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
 	buf := make([]byte, bufferSizeMB*1024*1024)
@@ -163,14 +156,14 @@ func (s *Service) streamVideo(ctx context.Context, clip twitch.Clip, filePath st
 	_, err = io.CopyBuffer(stdin, reader, buf)
 	if err != nil {
 		_ = cmd.Process.Kill()
-		return fmt.Errorf("copy video data: %w", err)
+		return 0, fmt.Errorf("copy video data: %w", err)
 	}
 
 	if err = cmd.Wait(); err != nil {
-		return fmt.Errorf("ffmpeg processing: %w", err)
+		return 0, fmt.Errorf("ffmpeg processing: %w", err)
 	}
 
-	return nil
+	return startOffset + time.Duration(clip.Duration*float64(time.Second)), nil
 }
 
 func (s *Service) preloadWorker(ctx context.Context) {
@@ -188,7 +181,11 @@ func (s *Service) preloadWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-readyChan:
-			s.preloadChan <- clip
+			select {
+			case <-ctx.Done():
+				return
+			case s.preloadChan <- clip:
+			}
 		}
 	}
 }
@@ -233,6 +230,8 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.startPreloadWorkers(ctx)
 
+	var currentOffset time.Duration
+
 	for {
 		clip, ok := s.getNextClip(ctx)
 		if !ok {
@@ -246,9 +245,11 @@ func (s *Service) Run(ctx context.Context) error {
 				slog.String("clip_url", clip.Clip().URL),
 			)
 
-			if err = s.streamVideo(ctx, clip.Clip(), videoFile, stdin); err != nil {
+			newOffset, err := s.streamVideo(ctx, clip.Clip(), videoFile, stdin, currentOffset)
+			if err != nil {
 				return fmt.Errorf("stream video: %w", err)
 			}
+			currentOffset = newOffset
 		} else {
 			slog.Error("Skipping video due to download failure",
 				slog.String("clip_url", clip.Clip().URL),
