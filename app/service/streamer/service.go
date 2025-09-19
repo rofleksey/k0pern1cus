@@ -61,7 +61,6 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-flvflags", "no_duration_filesize",
 		"-max_delay", "1000000",
 		"-rtbufsize", "512M",
-		"-thread_queue_size", "1024",
 		"-bufsize", "6000k",
 		s.cfg.Twitch.RTMPUrl,
 	)
