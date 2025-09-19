@@ -67,4 +67,6 @@ func main() {
 
 	log.Info("Waiting for services to finish...")
 	_ = di.Shutdown()
+
+	time.Sleep(time.Second)
 }
