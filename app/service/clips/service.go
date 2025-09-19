@@ -8,6 +8,7 @@ import (
 	"k0pern1cus/pkg/config"
 	"log/slog"
 	"math/rand"
+	"strconv"
 	"sync"
 	"time"
 
@@ -129,6 +130,10 @@ func (s *Service) backgroundFetchAllClips(ctx context.Context, minDate time.Time
 
 func (s *Service) fetchBroadcasterClips(ctx context.Context, broadcasterID string, minDate time.Time, workerID int) {
 	localHub := sentry.CurrentHub().Clone()
+	localHub.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetTag("worker_id", strconv.Itoa(workerID))
+		scope.SetTag("broadcaster_id", broadcasterID)
+	})
 
 	span := sentry.StartSpan(ctx, "clips.fetch_broadcaster")
 	defer span.Finish()

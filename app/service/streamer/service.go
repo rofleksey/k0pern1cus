@@ -93,6 +93,15 @@ func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) 
 			slog.String("process", processType),
 			slog.String("line", line),
 		)
+
+		sentry.AddBreadcrumb(&sentry.Breadcrumb{
+			Category: "ffmpeg",
+			Message:  line,
+			Data: map[string]interface{}{
+				"process_type": processType,
+			},
+			Level: sentry.LevelWarning,
+		})
 	}
 }
 

@@ -47,7 +47,7 @@ func main() {
 		slog.Error("Sentry initialization failed", slog.Any("error", err))
 	}
 	defer sentry.Flush(time.Second)
-	defer sentry.Recover()
+	defer sentry.RecoverWithContext(appCtx)
 
 	slog.ErrorContext(appCtx, "Service restarted")
 

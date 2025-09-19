@@ -1,9 +1,11 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
 )
@@ -33,13 +35,18 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	span := sentry.StartSpan(context.Background(), "config.load")
+	defer span.Finish()
+
 	data, err := os.ReadFile("config.yaml")
 	if err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	var result Config
 	if err := yaml.Unmarshal(data, &result); err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
@@ -52,6 +59,7 @@ func Load() (*Config, error) {
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
 	if err := validate.Struct(result); err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("failed to validate config: %w", err)
 	}
 
