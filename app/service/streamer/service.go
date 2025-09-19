@@ -49,6 +49,7 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-threads", "0",
 		"-re",
 		"-f", "mpegts",
 		"-i", "pipe:0",
@@ -59,6 +60,9 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 		"-f", "flv",
 		"-flvflags", "no_duration_filesize",
 		"-max_delay", "1000000",
+		"-rtbufsize", "512M",
+		"-thread_queue_size", "1024",
+		"-bufsize", "6000k",
 		s.cfg.Twitch.RTMPUrl,
 	)
 
@@ -134,6 +138,7 @@ func (s *Service) streamVideo(ctx context.Context, clipHandle *clips.ClipHandle,
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-threads", "0",
 		"-i", filePath,
 		"-vf", strings.Join(filters, ","),
 		"-c:v", "libx264",
