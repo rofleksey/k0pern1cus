@@ -16,6 +16,12 @@ type Config struct {
 		} `yaml:"telegram"`
 	} `yaml:"log"`
 
+	Sentry struct {
+		DSN              string  `yaml:"dsn"`
+		Environment      string  `yaml:"environment"`
+		TracesSampleRate float64 `yaml:"traces_sample_rate"`
+	} `yaml:"sentry"`
+
 	Twitch struct {
 		BroadcasterIDs []string `yaml:"broadcaster_ids" validate:"required"`
 		GameID         string   `yaml:"game_id" validate:"required"`
@@ -35,6 +41,13 @@ func Load() (*Config, error) {
 	var result Config
 	if err := yaml.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	if result.Sentry.TracesSampleRate == 0 {
+		result.Sentry.TracesSampleRate = 1.0
+	}
+	if result.Sentry.Environment == "" {
+		result.Sentry.Environment = "production"
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())

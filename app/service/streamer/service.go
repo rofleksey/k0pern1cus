@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/samber/do"
 )
 
@@ -39,6 +40,12 @@ func New(di *do.Injector) (*Service, error) {
 }
 
 func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *exec.Cmd, error) {
+	localHub := sentry.CurrentHub().Clone()
+
+	span := sentry.StartSpan(ctx, "streamer.streamer_process")
+	defer span.Finish()
+	defer sentry.Recover()
+
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -57,15 +64,18 @@ func (s *Service) startStreamerProcess(ctx context.Context) (io.WriteCloser, *ex
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		localHub.CaptureException(err)
 		return nil, nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		localHub.CaptureException(err)
 		return nil, nil, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err = cmd.Start(); err != nil {
+		localHub.CaptureException(err)
 		return nil, nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
@@ -78,11 +88,20 @@ func (s *Service) monitorFFmpegOutput(stderr io.ReadCloser, processType string) 
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
-		slog.Debug("FFmpeg output", "process", processType, "line", line)
+
+		slog.Warn("FFmpeg output",
+			slog.String("process", processType),
+			slog.String("line", line),
+		)
 	}
 }
 
 func (s *Service) streamVideo(ctx context.Context, clipHandle *clips.ClipHandle, stdin io.WriteCloser, startOffset time.Duration) (time.Duration, error) {
+	span := sentry.StartSpan(ctx, "streamer.stream_video")
+	defer span.Finish()
+
+	span.SetTag("clip_id", clipHandle.Clip().ID)
+
 	clip := clipHandle.Clip()
 	filePath, _ := clipHandle.GetDownloadedFile()
 
@@ -140,17 +159,20 @@ func (s *Service) streamVideo(ctx context.Context, clipHandle *clips.ClipHandle,
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		sentry.CaptureException(err)
 		return 0, fmt.Errorf("create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		sentry.CaptureException(err)
 		return 0, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	go s.monitorFFmpegOutput(stderr, clip.ID)
 
 	if err = cmd.Start(); err != nil {
+		sentry.CaptureException(err)
 		return 0, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
@@ -160,10 +182,12 @@ func (s *Service) streamVideo(ctx context.Context, clipHandle *clips.ClipHandle,
 	_, err = io.CopyBuffer(stdin, reader, buf)
 	if err != nil {
 		_ = cmd.Process.Kill()
+		sentry.CaptureException(err)
 		return 0, fmt.Errorf("copy video data: %w", err)
 	}
 
 	if err = cmd.Wait(); err != nil {
+		sentry.CaptureException(err)
 		return 0, fmt.Errorf("ffmpeg processing: %w", err)
 	}
 
@@ -216,6 +240,10 @@ func (s *Service) getNextClip(ctx context.Context) (*clips.ClipHandle, bool) {
 }
 
 func (s *Service) Run(ctx context.Context) error {
+	span := sentry.StartSpan(ctx, "streamer.run")
+	defer span.Finish()
+	defer sentry.Recover()
+
 	slog.Info("Starting the stream...")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -223,6 +251,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 	stdin, cmd, err := s.startStreamerProcess(ctx)
 	if err != nil {
+		sentry.CaptureException(err)
 		return fmt.Errorf("start streamer process: %w", err)
 	}
 	defer stdin.Close()
@@ -249,8 +278,10 @@ func (s *Service) Run(ctx context.Context) error {
 
 			newOffset, err := s.streamVideo(ctx, clip, stdin, currentOffset)
 			if err != nil {
+				sentry.CaptureException(err)
 				return fmt.Errorf("stream video: %w", err)
 			}
+
 			currentOffset = newOffset
 		} else {
 			slog.Error("Skipping video due to download failure",

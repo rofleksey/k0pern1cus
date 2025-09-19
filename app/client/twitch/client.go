@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/samber/do"
 )
 
@@ -35,7 +36,11 @@ func NewClient(di *do.Injector) (*Client, error) {
 }
 
 func (c *Client) GetClips(ctx context.Context, params *GetClipsParams) (*ClipsResponse, error) {
+	span := sentry.StartSpan(ctx, "twitch.get_clips")
+	defer span.Finish()
+
 	if err := c.ensureAuthenticated(ctx); err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -71,6 +76,7 @@ func (c *Client) GetClips(ctx context.Context, params *GetClipsParams) (*ClipsRe
 	requestURL := fmt.Sprintf("%s/clips?%s", baseURL, queryParams.Encode())
 	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("creating request failed: %w", err)
 	}
 
@@ -80,17 +86,21 @@ func (c *Client) GetClips(ctx context.Context, params *GetClipsParams) (*ClipsRe
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed: status %d, body: %s", resp.StatusCode, string(body))
+		err = fmt.Errorf("API request failed: status %d, body: %s", resp.StatusCode, string(body))
+		sentry.CaptureException(err)
+		return nil, err
 	}
 
 	var clipsResponse ClipsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&clipsResponse); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&clipsResponse); err != nil {
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("decoding response failed: %w", err)
 	}
 
@@ -119,6 +129,9 @@ func (c *Client) ensureAuthenticated(ctx context.Context) error {
 }
 
 func (c *Client) getAccessToken(ctx context.Context) (string, time.Time, error) {
+	span := sentry.StartSpan(ctx, "twitch.get_access_token")
+	defer span.Finish()
+
 	data := url.Values{}
 	data.Set("client_id", c.cfg.Twitch.ClientID)
 	data.Set("client_secret", c.cfg.Twitch.ClientSecret)
@@ -126,6 +139,7 @@ func (c *Client) getAccessToken(ctx context.Context) (string, time.Time, error) 
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://id.twitch.tv/oauth2/token", strings.NewReader(data.Encode()))
 	if err != nil {
+		sentry.CaptureException(err)
 		return "", time.Time{}, fmt.Errorf("creating auth request failed: %w", err)
 	}
 
@@ -139,11 +153,14 @@ func (c *Client) getAccessToken(ctx context.Context) (string, time.Time, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", time.Time{}, fmt.Errorf("authentication failed: status %d, body: %s", resp.StatusCode, string(body))
+		err = fmt.Errorf("authentication failed: status %d, body: %s", resp.StatusCode, string(body))
+		sentry.CaptureException(err)
+		return "", time.Time{}, err
 	}
 
 	var authResp authResponse
-	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+		sentry.CaptureException(err)
 		return "", time.Time{}, fmt.Errorf("decoding auth response failed: %w", err)
 	}
 

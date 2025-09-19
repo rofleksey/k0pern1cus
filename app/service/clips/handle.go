@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/getsentry/sentry-go"
 )
 
 var retryInterval = time.Second
@@ -38,7 +40,12 @@ func (h *ClipHandle) PrepareAsync(ctx context.Context) chan struct{} {
 	return h.readyChan
 }
 
-func (h *ClipHandle) download(ctx context.Context) error {
+func (h *ClipHandle) download(ctx context.Context, localHub *sentry.Hub) error {
+	span := sentry.StartSpan(ctx, "clip_handle.download")
+	defer span.Finish()
+
+	span.SetTag("clip_id", h.clip.ID)
+
 	beginTime := time.Now()
 
 	for i := 0; i < maxRetries; i++ {
@@ -51,6 +58,7 @@ func (h *ClipHandle) download(ctx context.Context) error {
 			)
 
 			if i == maxRetries-1 {
+				localHub.CaptureException(err)
 				return err
 			}
 
@@ -68,7 +76,12 @@ func (h *ClipHandle) download(ctx context.Context) error {
 	return fmt.Errorf("unexpected error")
 }
 
-func (h *ClipHandle) measurePreciseDuration(ctx context.Context) (time.Duration, error) {
+func (h *ClipHandle) measurePreciseDuration(ctx context.Context, localHub *sentry.Hub) (time.Duration, error) {
+	span := sentry.StartSpan(ctx, "clip_handle.measure_duration")
+	defer span.Finish()
+
+	span.SetTag("clip_id", h.clip.ID)
+
 	beginTime := time.Now()
 
 	args := []string{
@@ -82,6 +95,7 @@ func (h *ClipHandle) measurePreciseDuration(ctx context.Context) (time.Duration,
 
 	output, err := cmd.Output()
 	if err != nil {
+		localHub.CaptureException(err)
 		return 0, fmt.Errorf("ffprobe failed: %w", err)
 	}
 
@@ -91,15 +105,18 @@ func (h *ClipHandle) measurePreciseDuration(ctx context.Context) (time.Duration,
 		} `json:"format"`
 	}
 	if err = json.Unmarshal(output, &probeOutput); err != nil {
+		localHub.CaptureException(err)
 		return 0, fmt.Errorf("parse ffprobe output: %w", err)
 	}
 
 	if probeOutput.Format.Duration == "" {
+		localHub.CaptureException(err)
 		return 0, fmt.Errorf("no duration found in ffprobe output")
 	}
 
 	durationSec, err := strconv.ParseFloat(probeOutput.Format.Duration, 64)
 	if err != nil {
+		localHub.CaptureException(err)
 		return 0, fmt.Errorf("parse duration: %w", err)
 	}
 
@@ -112,9 +129,11 @@ func (h *ClipHandle) measurePreciseDuration(ctx context.Context) (time.Duration,
 }
 
 func (h *ClipHandle) prepareAsync(ctx context.Context) {
+	localHub := sentry.CurrentHub().Clone()
+
 	defer close(h.readyChan)
 
-	if err := h.download(ctx); err != nil {
+	if err := h.download(ctx, localHub); err != nil {
 		slog.Error("Max retries exceeded for clip download",
 			slog.String("clip_id", h.clip.ID),
 			slog.Any("error", err),
@@ -122,7 +141,7 @@ func (h *ClipHandle) prepareAsync(ctx context.Context) {
 		return
 	}
 
-	duration, err := h.measurePreciseDuration(ctx)
+	duration, err := h.measurePreciseDuration(ctx, localHub)
 	if err != nil {
 		slog.Error("Measure precise duration for clip failed",
 			slog.String("clip_id", h.clip.ID),

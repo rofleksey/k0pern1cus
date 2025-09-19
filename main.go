@@ -7,12 +7,14 @@ import (
 	"k0pern1cus/app/service/clips"
 	"k0pern1cus/app/service/streamer"
 	"k0pern1cus/pkg/config"
+	sentry2 "k0pern1cus/pkg/sentry"
 	"k0pern1cus/pkg/tlog"
 	"log/slog"
 	"os"
 	"os/signal"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/samber/do"
 )
@@ -40,6 +42,13 @@ func main() {
 	if err = tlog.Init(cfg); err != nil {
 		log.Fatalf("logging init failed: %v", err)
 	}
+
+	if err = sentry2.Init(cfg); err != nil {
+		slog.Error("Sentry initialization failed", slog.Any("error", err))
+	}
+	defer sentry.Flush(time.Second)
+	defer sentry.Recover()
+
 	slog.ErrorContext(appCtx, "Service restarted")
 
 	do.Provide(di, twitch.NewClient)
@@ -67,6 +76,4 @@ func main() {
 
 	log.Info("Waiting for services to finish...")
 	_ = di.Shutdown()
-
-	time.Sleep(time.Second)
 }

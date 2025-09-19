@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/samber/do"
 )
 
@@ -34,12 +35,19 @@ func New(di *do.Injector) (*Downloader, error) {
 }
 
 func (d *Downloader) DownloadClip(ctx context.Context, slug, outputPath string) error {
+	span := sentry.StartSpan(ctx, "clip_downloader.download")
+	defer span.Finish()
+
+	span.SetTag("clip_slug", slug)
+
 	downloadURL, err := d.getClipAuthenticatedURL(ctx, slug)
 	if err != nil {
+		sentry.CaptureException(err)
 		return fmt.Errorf("could not get clip authenticated url: %w", err)
 	}
 
 	if err = d.downloadFile(ctx, downloadURL, outputPath); err != nil {
+		sentry.CaptureException(err)
 		return fmt.Errorf("could not download clip: %w", err)
 	}
 

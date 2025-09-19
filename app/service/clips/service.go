@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/samber/do"
 )
 
@@ -57,10 +58,14 @@ func New(di *do.Injector) (*Service, error) {
 }
 
 func (s *Service) Init(ctx context.Context) error {
+	span := sentry.StartSpan(ctx, "clips.init")
+	defer span.Finish()
+
 	slog.Debug("Initializing clips...")
 
 	minDate, err := time.Parse("January 2, 2006", s.cfg.Twitch.MinDate)
 	if err != nil {
+		sentry.CaptureException(err)
 		return fmt.Errorf("could not parse account creation_date: %v", err)
 	}
 
@@ -123,6 +128,15 @@ func (s *Service) backgroundFetchAllClips(ctx context.Context, minDate time.Time
 }
 
 func (s *Service) fetchBroadcasterClips(ctx context.Context, broadcasterID string, minDate time.Time, workerID int) {
+	localHub := sentry.CurrentHub().Clone()
+
+	span := sentry.StartSpan(ctx, "clips.fetch_broadcaster")
+	defer span.Finish()
+	defer sentry.Recover()
+
+	span.SetTag("broadcaster_id", broadcasterID)
+	span.SetTag("worker_id", fmt.Sprintf("%d", workerID))
+
 	endedAt := time.Now()
 	startedAt := endedAt.Add(-timeWindow)
 
@@ -152,6 +166,7 @@ func (s *Service) fetchBroadcasterClips(ctx context.Context, broadcasterID strin
 				After:         after,
 			})
 			if err != nil {
+				localHub.CaptureException(err)
 				slog.Error("Failed to get clips",
 					slog.String("error", err.Error()),
 					slog.String("broadcaster_id", broadcasterID),
