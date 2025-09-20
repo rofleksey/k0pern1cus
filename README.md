@@ -1,6 +1,11 @@
-# K0pern1cus - Twitch Clip Streaming Service
+# K0pern1cus
 
-K0pern1cus is a high-performance Go application that automatically streams curated Twitch clips to a live channel. It fetches clips from specified broadcasters, processes them with FFmpeg, and streams them continuously to a Twitch RTMP endpoint.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/rofleksey/k0pern1cus)](go.mod)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-available-blue.svg)](Dockerfile)
+
+K0pern1cus is a high-performance Go application that automatically streams curated Twitch clips to a live channel.
+It fetches clips from specified broadcasters, processes them with FFmpeg, and streams them continuously to a Twitch RTMP endpoint.
 
 ## Features
 
